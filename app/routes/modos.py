@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.database.database import get_db
 from app.routes.models import ModoTarea, UsuarioModo, Usuario
 from app.routes.auth import get_current_user
+from app.routes.auth_utils import validar_id
 from pydantic import BaseModel
 from typing import List
 
@@ -30,7 +31,8 @@ def mis_modos_activos(db: Session = Depends(get_db), user: Usuario = Depends(get
 
 @router.post("/activar")
 def activar_modo(modo: ModoActivar, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
-    """Activa un modo para el usuario"""
+    if not validar_id(modo.id_modo):
+        raise HTTPException(400, "ID de modo inválido")
     existe = db.query(ModoTarea).filter(ModoTarea.id_modo == modo.id_modo).first()
     if not existe:
         raise HTTPException(404, "Modo no encontrado")
@@ -49,6 +51,8 @@ def activar_modo(modo: ModoActivar, db: Session = Depends(get_db), user: Usuario
 
 @router.delete("/desactivar/{id_modo}")
 def desactivar_modo(id_modo: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    if not validar_id(id_modo):
+        raise HTTPException(400, "ID de modo inválido")
     relacion = db.query(UsuarioModo).filter(
         UsuarioModo.id_usuario == user.id_usuario,
         UsuarioModo.id_modo == id_modo

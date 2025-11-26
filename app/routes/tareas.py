@@ -2,12 +2,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database.database import get_db
-from app.routes.models import Tarea, Usuario
+from app.routes.models import Tarea, Usuario, TipoTarea
 from app.routes.auth import get_current_user
+from app.routes.auth_utils import validar_id, validar_string, validar_prioridad, validar_estado_tarea, validar_color_hex, validar_hora
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import date, time as datetime_time
-import datetime
+from datetime import date, time as datetime_time, datetime
+import datetime as dt
 
 router = APIRouter(prefix="/tareas", tags=["Tareas"])
 
@@ -47,29 +48,72 @@ class TareaOut(BaseModel):
     estado: str
     id_categoria: Optional[int]
 
+    class Config:
+        from_attributes = True
+
 # === RUTAS ORIGINALES (SIN TOCAR NADA) ===
 
 @router.post("/", response_model=TareaOut)
 def crear_tarea(tarea: TareaCreate, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    # ✅ Validación: Título no vacío
+    es_valido, msg = validar_string(tarea.titulo, min_len=3, max_len=200, nombre_campo="Título")
+    if not es_valido:
+        raise HTTPException(400, msg)
+    
+    # ✅ Validación: Prioridad válida
+    if not validar_prioridad(tarea.prioridad):
+        raise HTTPException(400, "Prioridad debe ser: baja, media o alta")
+    
+    # ✅ Validación: Fecha no en el pasado
+    if tarea.fecha < date.today():
+        raise HTTPException(400, "No se pueden crear tareas en el pasado")
+    
+    # ✅ Validación: Hora válida
     hora_obj = None
     if tarea.hora:
+        if not validar_hora(tarea.hora):
+            raise HTTPException(400, "Formato de hora inválido. Use HH:MM")
         try:
-            hora_obj = datetime.datetime.strptime(tarea.hora, "%H:%M").time()
+            hora_obj = dt.datetime.strptime(tarea.hora, "%H:%M").time()
         except:
-            pass
+            raise HTTPException(400, "Hora inválida")
+    
+    # ✅ Validación: Categoría existe
+    if tarea.id_categoria and not validar_id(tarea.id_categoria):
+        raise HTTPException(400, "ID de categoría inválido")
+    if tarea.id_categoria:
+        cat_existe = db.query(TipoTarea).filter(TipoTarea.id_categoria == tarea.id_categoria).first()
+        if not cat_existe:
+            raise HTTPException(404, "Categoría no encontrada")
+    
+    # ✅ Validación: Duración positiva
+    if tarea.duracion_estimada and tarea.duracion_estimada <= 0:
+        raise HTTPException(400, "Duración estimada debe ser mayor a 0")
+    
+    # ✅ Validación: Color válido
+    if tarea.etiqueta_color and not validar_color_hex(tarea.etiqueta_color):
+        raise HTTPException(400, "Color debe ser en formato hexadecimal válido (#XXXXXX)")
+    
+    # ✅ Validación: Repetición válida
+    if tarea.repeticion.lower() not in ['ninguna', 'diaria', 'semanal', 'mensual']:
+        raise HTTPException(400, "Repetición inválida")
+    
+    # ✅ Validación: Recordatorio válido
+    if tarea.recordatorio_minutos and tarea.recordatorio_minutos <= 0:
+        raise HTTPException(400, "Recordatorio debe ser mayor a 0 minutos")
 
     nueva = Tarea(
         id_usuario=user.id_usuario,
-        titulo=tarea.titulo,
-        descripcion=tarea.descripcion,
+        titulo=tarea.titulo.strip(),
+        descripcion=tarea.descripcion.strip() if tarea.descripcion else None,
         fecha=tarea.fecha,
         hora=hora_obj,
         id_categoria=tarea.id_categoria,
-        prioridad=tarea.prioridad,
+        prioridad=tarea.prioridad.lower(),
         duracion_estimada=tarea.duracion_estimada,
         estado="pendiente",
         etiqueta_color=tarea.etiqueta_color,
-        repeticion=tarea.repeticion,
+        repeticion=tarea.repeticion.lower(),
         recordatorio_minutos=tarea.recordatorio_minutos
     )
     db.add(nueva)
@@ -77,13 +121,16 @@ def crear_tarea(tarea: TareaCreate, db: Session = Depends(get_db), user: Usuario
     db.refresh(nueva)
     return nueva
 
-# ← TU GET ORIGINAL (se queda igual)
 @router.get("/", response_model=List[TareaOut])
 def listar_tareas(
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
     categoria: Optional[int] = Query(None, alias="id_categoria")
 ):
+    # ✅ Validación: Categoría válida
+    if categoria and not validar_id(categoria):
+        raise HTTPException(400, "ID de categoría inválido")
+    
     query = db.query(Tarea).filter(Tarea.id_usuario == user.id_usuario)
     if categoria:
         query = query.filter(Tarea.id_categoria == categoria)
@@ -92,14 +139,47 @@ def listar_tareas(
 
 @router.put("/{id_tarea}", response_model=TareaOut)
 def actualizar_tarea(id_tarea: int, datos: TareaUpdate, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    if not validar_id(id_tarea):
+        raise HTTPException(400, "ID de tarea inválido")
+    
     tarea = db.query(Tarea).filter(Tarea.id_tarea == id_tarea, Tarea.id_usuario == user.id_usuario).first()
     if not tarea:
         raise HTTPException(404, "Tarea no encontrada")
 
+    # ✅ Validación: Título no vacío
+    if datos.titulo is not None:
+        es_valido, msg = validar_string(datos.titulo, min_len=3, max_len=200, nombre_campo="Título")
+        if not es_valido:
+            raise HTTPException(400, msg)
+    
+    # ✅ Validación: Prioridad válida
+    if datos.prioridad and not validar_prioridad(datos.prioridad):
+        raise HTTPException(400, "Prioridad inválida")
+    
+    # ✅ Validación: Estado válido
+    if datos.estado and not validar_estado_tarea(datos.estado):
+        raise HTTPException(400, "Estado debe ser: pendiente, en_progreso, completada o pausada")
+    
+    # ✅ Validación: Fecha válida
+    if datos.fecha and datos.fecha < date.today():
+        raise HTTPException(400, "No se pueden asignar fechas en el pasado")
+    
+    # ✅ Validación: Hora válida
+    if datos.hora and not validar_hora(datos.hora):
+        raise HTTPException(400, "Formato de hora inválido")
+    
+    # ✅ Validación: Categoría existe
+    if datos.id_categoria and not validar_id(datos.id_categoria):
+        raise HTTPException(400, "ID de categoría inválido")
+    if datos.id_categoria:
+        cat_existe = db.query(TipoTarea).filter(TipoTarea.id_categoria == datos.id_categoria).first()
+        if not cat_existe:
+            raise HTTPException(404, "Categoría no encontrada")
+
     update_data = datos.dict(exclude_unset=True)
     if "hora" in update_data and update_data["hora"]:
         try:
-            update_data["hora"] = datetime.datetime.strptime(update_data["hora"], "%H:%M").time()
+            update_data["hora"] = dt.datetime.strptime(update_data["hora"], "%H:%M").time()
         except:
             update_data["hora"] = None
 
@@ -112,6 +192,8 @@ def actualizar_tarea(id_tarea: int, datos: TareaUpdate, db: Session = Depends(ge
 
 @router.delete("/{id_tarea}")
 def eliminar_tarea(id_tarea: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    if not validar_id(id_tarea):
+        raise HTTPException(400, "ID de tarea inválido")
     tarea = db.query(Tarea).filter(Tarea.id_tarea == id_tarea, Tarea.id_usuario == user.id_usuario).first()
     if not tarea:
         raise HTTPException(404, "Tarea no encontrada")
@@ -131,13 +213,19 @@ def filtrar_tareas(
     estado: Optional[str] = Query(None, description="pendiente/en_progreso/completada/pausada"),
     prioridad: Optional[str] = Query(None, description="baja/media/alta")
 ):
-    """
-    Filtra tareas con múltiples criterios.
-    Ejemplos:
-    - /tareas/filtrar?categoria=2
-    - /tareas/filtrar?fecha=2025-11-21
-    - /tareas/filtrar?desde=2025-11-01&hasta=2025-11-30&estado=pendiente
-    """
+    # ✅ Validaciones de query parameters
+    if categoria and not validar_id(categoria):
+        raise HTTPException(400, "ID de categoría inválido")
+    
+    if estado and not validar_estado_tarea(estado):
+        raise HTTPException(400, "Estado inválido")
+    
+    if prioridad and not validar_prioridad(prioridad):
+        raise HTTPException(400, "Prioridad inválida")
+    
+    if desde and hasta and desde > hasta:
+        raise HTTPException(400, "Fecha 'desde' no puede ser mayor a 'hasta'")
+
     query = db.query(Tarea).filter(Tarea.id_usuario == user.id_usuario)
 
     if categoria is not None:

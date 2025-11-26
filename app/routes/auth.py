@@ -5,14 +5,12 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database.database import get_db
 from app.routes.models import Usuario
-from app.routes.auth_utils import pwd_context, create_access_token, verify_token
+from app.routes.auth_utils import pwd_context, create_access_token, verify_token, validar_email, validar_contrasena, validar_string, validar_edad, validar_id
 from datetime import datetime, timedelta
 import secrets
 import string
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 import os
-from fastapi import Depends
-from app.routes.auth_utils import verify_token
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -51,7 +49,7 @@ class RegisterUser(BaseModel):
     nombres: str
     apellidos: str
     edad: int
-    id_rol: int = 2  # Default: usuario estándar
+    id_rol: int = 1  # Default: usuario estándar
 
 class RecoverPassword(BaseModel):
     correo: str
@@ -68,9 +66,37 @@ def generar_token() -> str:
 
 @router.post("/register")
 def register(user: RegisterUser, db: Session = Depends(get_db)):
-    # Verificar si el correo ya existe
+    # ✅ Validación 1: Email válido
+    if not validar_email(user.correo):
+        raise HTTPException(status_code=400, detail="Email inválido")
+    
+    # ✅ Validación 2: Email duplicado
     if db.query(Usuario).filter(Usuario.correo == user.correo).first():
         raise HTTPException(status_code=400, detail="El correo ya está registrado")
+
+    # ✅ Validación 3: Contraseña fuerte
+    es_valida, mensaje = validar_contrasena(user.contrasena)
+    if not es_valida:
+        raise HTTPException(status_code=400, detail=mensaje)
+
+    # ✅ Validación 4: Nombres no vacíos
+    es_valido, msg = validar_string(user.nombres, min_len=2, max_len=50, nombre_campo="Nombres")
+    if not es_valido:
+        raise HTTPException(status_code=400, detail=msg)
+
+    # ✅ Validación 5: Apellidos no vacíos
+    es_valido, msg = validar_string(user.apellidos, min_len=2, max_len=50, nombre_campo="Apellidos")
+    if not es_valido:
+        raise HTTPException(status_code=400, detail=msg)
+
+    # ✅ Validación 6: Edad válida
+    es_valida, mensaje = validar_edad(user.edad)
+    if not es_valida:
+        raise HTTPException(status_code=400, detail=mensaje)
+
+    # ✅ Validación 7: id_rol válido
+    if not validar_id(user.id_rol):
+        raise HTTPException(status_code=400, detail="ID de rol inválido")
 
     # Hash de la contraseña
     hashed_password = pwd_context.hash(user.contrasena)
@@ -79,8 +105,8 @@ def register(user: RegisterUser, db: Session = Depends(get_db)):
     nuevo_usuario = Usuario(
         correo=user.correo,
         contrasena=hashed_password,
-        nombres=user.nombres,
-        apellidos=user.apellidos,
+        nombre=user.nombres,
+        apellido=user.apellidos,
         edad=user.edad,
         id_rol=user.id_rol,
         fecha_registro=datetime.now()
@@ -93,6 +119,10 @@ def register(user: RegisterUser, db: Session = Depends(get_db)):
 
 @router.post("/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    # ✅ Validación: Email válido
+    if not validar_email(form_data.username):
+        raise HTTPException(status_code=400, detail="Email inválido")
+    
     usuario = db.query(Usuario).filter(Usuario.correo == form_data.username).first()
     if not usuario or not pwd_context.verify(form_data.password, usuario.contrasena):
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
@@ -111,6 +141,10 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
 @router.post("/recover-password")
 async def recover_password(data: RecoverPassword, db: Session = Depends(get_db)):
+    # ✅ Validación: Email válido
+    if not validar_email(data.correo):
+        raise HTTPException(status_code=400, detail="Email inválido")
+    
     usuario = db.query(Usuario).filter(Usuario.correo == data.correo).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -127,7 +161,7 @@ async def recover_password(data: RecoverPassword, db: Session = Depends(get_db))
         recipients=[usuario.correo],
         body=f"""
         <h2>Recuperación de contraseña</h2>
-        <p>Hola <strong>{usuario.nombres}</strong>,</p>
+        <p>Hola <strong>{usuario.nombre}</strong>,</p>
         <p>Hemos recibido una solicitud para restablecer tu contraseña.</p>
         <p><strong>Tu token de recuperación es:</strong></p>
         <h3 style="background:#f0f0f0;padding:10px;border-radius:5px;">{token}</h3>
@@ -147,6 +181,11 @@ async def recover_password(data: RecoverPassword, db: Session = Depends(get_db))
 
 @router.post("/reset-password")
 def reset_password(data: ResetPassword, db: Session = Depends(get_db)):
+    # ✅ Validación: Contraseña fuerte
+    es_valida, mensaje = validar_contrasena(data.nueva_contrasena)
+    if not es_valida:
+        raise HTTPException(status_code=400, detail=mensaje)
+    
     usuario = db.query(Usuario).filter(Usuario.token_reset == data.token).first()
     if not usuario:
         raise HTTPException(status_code=400, detail="Token inválido")

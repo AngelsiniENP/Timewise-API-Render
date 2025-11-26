@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.database.database import get_db
 from app.routes.models import Meta, Usuario
 from app.routes.auth import get_current_user
+from app.routes.auth_utils import validar_id, validar_string
 from pydantic import BaseModel, validator
 from typing import List, Optional
 from datetime import datetime
@@ -16,6 +17,14 @@ class MetaCreate(BaseModel):
     frecuencia: str
     objetivo: int
 
+    @validator('descripcion')
+    def validar_descripcion(cls, v):
+        if not v or len(v.strip()) < 5:
+            raise ValueError("Descripción debe tener al menos 5 caracteres")
+        if len(v) > 500:
+            raise ValueError("Descripción no puede exceder 500 caracteres")
+        return v.strip()
+
     @validator('frecuencia')
     def validar_frecuencia(cls, v):
         v = v.strip().lower()
@@ -23,10 +32,28 @@ class MetaCreate(BaseModel):
             raise ValueError("Frecuencia debe ser: diaria, semanal o mensual")
         return v
 
+    @validator('objetivo')
+    def validar_objetivo(cls, v):
+        if v <= 0:
+            raise ValueError("Objetivo debe ser mayor a 0")
+        if v > 10000:
+            raise ValueError("Objetivo no puede exceder 10000")
+        return v
+
 class MetaUpdate(BaseModel):
     descripcion: Optional[str] = None
     frecuencia: Optional[str] = None
     objetivo: Optional[int] = None
+
+    @validator('descripcion')
+    def validar_descripcion(cls, v):
+        if v is None:
+            return v
+        if len(v.strip()) < 5:
+            raise ValueError("Descripción debe tener al menos 5 caracteres")
+        if len(v) > 500:
+            raise ValueError("Descripción no puede exceder 500 caracteres")
+        return v.strip()
 
     @validator('frecuencia')
     def validar_frecuencia(cls, v):
@@ -37,8 +64,26 @@ class MetaUpdate(BaseModel):
             raise ValueError("Frecuencia inválida")
         return v
 
+    @validator('objetivo')
+    def validar_objetivo(cls, v):
+        if v is None:
+            return v
+        if v <= 0:
+            raise ValueError("Objetivo debe ser mayor a 0")
+        if v > 10000:
+            raise ValueError("Objetivo no puede exceder 10000")
+        return v
+
 class ProgresoUpdate(BaseModel):
     progreso: int
+    
+    @validator('progreso')
+    def validar_progreso(cls, v):
+        if v < 0:
+            raise ValueError("Progreso no puede ser negativo")
+        if v > 10000:
+            raise ValueError("Progreso no puede exceder 10000")
+        return v
 
 class MetaOut(BaseModel):
     id_meta: int
@@ -75,12 +120,16 @@ def listar_metas(user: Usuario = Depends(get_current_user), db: Session = Depend
 
 @router.get("/{id_meta}", response_model=MetaOut)
 def obtener_meta(id_meta: int, user: Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not validar_id(id_meta):
+        raise HTTPException(400, "ID de meta inválido")
     meta = db.query(Meta).filter(Meta.id_meta == id_meta, Meta.id_usuario == user.id_usuario).first()
     if not meta: raise HTTPException(404, "Meta no encontrada")
     return meta
 
 @router.put("/{id_meta}", response_model=MetaOut)
 def actualizar_meta(id_meta: int, datos: MetaUpdate, user: Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not validar_id(id_meta):
+        raise HTTPException(400, "ID de meta inválido")
     meta = db.query(Meta).filter(Meta.id_meta == id_meta, Meta.id_usuario == user.id_usuario).first()
     if not meta: raise HTTPException(404, "Meta no encontrada")
 
@@ -94,6 +143,8 @@ def actualizar_meta(id_meta: int, datos: MetaUpdate, user: Usuario = Depends(get
 
 @router.delete("/{id_meta}")
 def eliminar_meta(id_meta: int, user: Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not validar_id(id_meta):
+        raise HTTPException(400, "ID de meta inválido")
     meta = db.query(Meta).filter(Meta.id_meta == id_meta, Meta.id_usuario == user.id_usuario).first()
     if not meta: raise HTTPException(404, "Meta no encontrada")
     db.delete(meta)
@@ -102,9 +153,10 @@ def eliminar_meta(id_meta: int, user: Usuario = Depends(get_current_user), db: S
 
 @router.put("/{id_meta}/progreso", response_model=MetaOut)
 def actualizar_progreso(id_meta: int, datos: ProgresoUpdate, user: Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not validar_id(id_meta):
+        raise HTTPException(400, "ID de meta inválido")
     meta = db.query(Meta).filter(Meta.id_meta == id_meta, Meta.id_usuario == user.id_usuario).first()
     if not meta: raise HTTPException(404, "Meta no encontrada")
-    if datos.progreso < 0: raise HTTPException(400, "Progreso no puede ser negativo")
 
     meta.progreso = datos.progreso
     meta.completada = meta.progreso >= meta.objetivo
