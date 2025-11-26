@@ -29,7 +29,7 @@ class MetaCreate(BaseModel):
     def validar_frecuencia(cls, v):
         v = v.strip().lower()
         if v not in ['diaria', 'semanal', 'mensual']:
-            raise ValueError("Frecuencia debe ser: diaria, semanal o mensual")
+            raise ValueError("Frecuencia inválida. Válidas: diaria, semanal, mensual")
         return v
 
     @validator('objetivo')
@@ -61,7 +61,7 @@ class MetaUpdate(BaseModel):
             return v
         v = v.strip().lower()
         if v not in ['diaria', 'semanal', 'mensual']:
-            raise ValueError("Frecuencia inválida")
+            raise ValueError("Frecuencia inválida. Válidas: diaria, semanal, mensual")
         return v
 
     @validator('objetivo')
@@ -123,7 +123,8 @@ def obtener_meta(id_meta: int, user: Usuario = Depends(get_current_user), db: Se
     if not validar_id(id_meta):
         raise HTTPException(400, "ID de meta inválido")
     meta = db.query(Meta).filter(Meta.id_meta == id_meta, Meta.id_usuario == user.id_usuario).first()
-    if not meta: raise HTTPException(404, "Meta no encontrada")
+    if not meta:
+        raise HTTPException(404, f"Meta con ID {id_meta} no encontrada")
     return meta
 
 @router.put("/{id_meta}", response_model=MetaOut)
@@ -131,7 +132,8 @@ def actualizar_meta(id_meta: int, datos: MetaUpdate, user: Usuario = Depends(get
     if not validar_id(id_meta):
         raise HTTPException(400, "ID de meta inválido")
     meta = db.query(Meta).filter(Meta.id_meta == id_meta, Meta.id_usuario == user.id_usuario).first()
-    if not meta: raise HTTPException(404, "Meta no encontrada")
+    if not meta:
+        raise HTTPException(404, f"Meta con ID {id_meta} no encontrada")
 
     update_data = datos.dict(exclude_unset=True)
     for key, value in update_data.items():
@@ -146,17 +148,19 @@ def eliminar_meta(id_meta: int, user: Usuario = Depends(get_current_user), db: S
     if not validar_id(id_meta):
         raise HTTPException(400, "ID de meta inválido")
     meta = db.query(Meta).filter(Meta.id_meta == id_meta, Meta.id_usuario == user.id_usuario).first()
-    if not meta: raise HTTPException(404, "Meta no encontrada")
+    if not meta:
+        raise HTTPException(404, f"Meta con ID {id_meta} no encontrada")
     db.delete(meta)
     db.commit()
-    return {"msg": "Meta eliminada"}
+    return {"msg": f"Meta {id_meta} eliminada correctamente"}
 
 @router.put("/{id_meta}/progreso", response_model=MetaOut)
 def actualizar_progreso(id_meta: int, datos: ProgresoUpdate, user: Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
     if not validar_id(id_meta):
         raise HTTPException(400, "ID de meta inválido")
     meta = db.query(Meta).filter(Meta.id_meta == id_meta, Meta.id_usuario == user.id_usuario).first()
-    if not meta: raise HTTPException(404, "Meta no encontrada")
+    if not meta:
+        raise HTTPException(404, f"Meta con ID {id_meta} no encontrada")
 
     meta.progreso = datos.progreso
     meta.completada = meta.progreso >= meta.objetivo

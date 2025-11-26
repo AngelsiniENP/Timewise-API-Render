@@ -4,7 +4,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database.database import get_db
-from app.routes.models import Usuario
+from app.routes.models import Usuario, Rol
 from app.routes.auth_utils import pwd_context, create_access_token, verify_token, validar_email, validar_contrasena, validar_string, validar_edad, validar_id
 from datetime import datetime, timedelta
 import secrets
@@ -68,11 +68,11 @@ def generar_token() -> str:
 def register(user: RegisterUser, db: Session = Depends(get_db)):
     # ✅ Validación 1: Email válido
     if not validar_email(user.correo):
-        raise HTTPException(status_code=400, detail="Email inválido")
+        raise HTTPException(status_code=400, detail="Email inválido. Formato correcto: ejemplo@dominio.com")
     
     # ✅ Validación 2: Email duplicado
-    if db.query(Usuario).filter(Usuario.correo == user.correo).first():
-        raise HTTPException(status_code=400, detail="El correo ya está registrado")
+    if db.query(Usuario).filter(Usuario.correo == user.correo.lower()).first():
+        raise HTTPException(status_code=400, detail="El correo ya está registrado en el sistema")
 
     # ✅ Validación 3: Contraseña fuerte
     es_valida, mensaje = validar_contrasena(user.contrasena)
@@ -97,16 +97,21 @@ def register(user: RegisterUser, db: Session = Depends(get_db)):
     # ✅ Validación 7: id_rol válido
     if not validar_id(user.id_rol):
         raise HTTPException(status_code=400, detail="ID de rol inválido")
+    
+    # ✅ Validación 8: Verificar que el rol existe
+    rol_existe = db.query(Rol).filter(Rol.id_rol == user.id_rol).first()
+    if not rol_existe:
+        raise HTTPException(status_code=400, detail="El rol especificado no existe")
 
     # Hash de la contraseña
     hashed_password = pwd_context.hash(user.contrasena)
 
     # Crear usuario
     nuevo_usuario = Usuario(
-        correo=user.correo,
+        correo=user.correo.lower(),
         contrasena=hashed_password,
-        nombre=user.nombres,
-        apellido=user.apellidos,
+        nombre=user.nombres.strip(),
+        apellido=user.apellidos.strip(),
         edad=user.edad,
         id_rol=user.id_rol,
         fecha_registro=datetime.now()
@@ -115,7 +120,7 @@ def register(user: RegisterUser, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(nuevo_usuario)
 
-    return {"msg": "Usuario creado exitosamente"}
+    return {"msg": "Usuario creado exitosamente", "usuario_id": nuevo_usuario.id_usuario}
 
 @router.post("/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
@@ -123,7 +128,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     if not validar_email(form_data.username):
         raise HTTPException(status_code=400, detail="Email inválido")
     
-    usuario = db.query(Usuario).filter(Usuario.correo == form_data.username).first()
+    usuario = db.query(Usuario).filter(Usuario.correo == form_data.username.lower()).first()
     if not usuario or not pwd_context.verify(form_data.password, usuario.contrasena):
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
@@ -145,7 +150,7 @@ async def recover_password(data: RecoverPassword, db: Session = Depends(get_db))
     if not validar_email(data.correo):
         raise HTTPException(status_code=400, detail="Email inválido")
     
-    usuario = db.query(Usuario).filter(Usuario.correo == data.correo).first()
+    usuario = db.query(Usuario).filter(Usuario.correo == data.correo.lower()).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
@@ -181,7 +186,11 @@ async def recover_password(data: RecoverPassword, db: Session = Depends(get_db))
 
 @router.post("/reset-password")
 def reset_password(data: ResetPassword, db: Session = Depends(get_db)):
-    # ✅ Validación: Contraseña fuerte
+    # ✅ Validación 1: Token no vacío
+    if not data.token or not data.token.strip():
+        raise HTTPException(status_code=400, detail="Token es requerido")
+    
+    # ✅ Validación 2: Contraseña fuerte
     es_valida, mensaje = validar_contrasena(data.nueva_contrasena)
     if not es_valida:
         raise HTTPException(status_code=400, detail=mensaje)
@@ -191,7 +200,7 @@ def reset_password(data: ResetPassword, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Token inválido")
 
     if usuario.token_reset_expiry < datetime.now():
-        raise HTTPException(status_code=400, detail="Token expirado")
+        raise HTTPException(status_code=400, detail="Token expirado. Solicita uno nuevo")
 
     # Actualizar contraseña
     usuario.contrasena = pwd_context.hash(data.nueva_contrasena)

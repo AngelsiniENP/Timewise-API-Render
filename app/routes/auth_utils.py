@@ -44,13 +44,19 @@ def validar_email(email: str) -> bool:
     return re.match(patron, email) is not None
 
 def validar_contrasena(contrasena: str) -> tuple[bool, str]:
-    """Valida fortaleza de contraseña. Retorna (es_valida, mensaje)"""
+    """
+    Valida fortaleza de contraseña. Retorna (es_valida, mensaje)
+    Requisitos:
+    - Mínimo 6 caracteres
+    - Al menos una mayúscula
+    - Al menos un número
+    """
     if len(contrasena) < 6:
         return False, "La contraseña debe tener al menos 6 caracteres"
     if not any(c.isupper() for c in contrasena):
-        return False, "Debe contener al menos una mayúscula"
+        return False, "La contraseña debe contener al menos una mayúscula (A-Z)"
     if not any(c.isdigit() for c in contrasena):
-        return False, "Debe contener al menos un número"
+        return False, "La contraseña debe contener al menos un número (0-9)"
     return True, "Contraseña válida"
 
 def validar_string(valor: str, min_len: int = 1, max_len: int = 255, nombre_campo: str = "Campo") -> tuple[bool, str]:
