@@ -1,31 +1,61 @@
-# app/routes/tareas.py → VERSIÓN 100% FUNCIONAL Y DEFINITIVA (2025)
+# app/routes/tareas.py → VERSIÓN ULTRA PROFESIONAL 2025
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database.database import get_db
-from app.routes.models import Tarea, Usuario, TipoTarea
+from app.routes.models import Tarea, Usuario
 from app.routes.auth import get_current_user
-from app.routes.auth_utils import (
-    validar_string,
-    validar_prioridad,
-    validar_hora,
-)
-from pydantic import BaseModel
+from app.routes.auth_utils import validar_string, validar_hora
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import date
 
 router = APIRouter(prefix="/tareas", tags=["Tareas"])
 
 
-# ======================= MODELOS PYDANTIC =======================
+# ======================= MODELOS CON VALIDACIONES CLARAS =======================
 class TareaCreate(BaseModel):
     titulo: str
     descripcion: Optional[str] = None
     fecha: date
-    hora: Optional[str] = None                # ← string "14:30"
+    hora: Optional[str] = None
     id_categoria: Optional[int] = None
     prioridad: str = "media"
     etiqueta_color: Optional[str] = None
     recordatorio_minutos: Optional[int] = None
+
+    @field_validator("titulo")
+    def validar_titulo(cls, v):
+        if not validar_string(v, min_len=3, max_len=200):
+            raise ValueError("El título debe tener entre 3 y 200 caracteres")
+        return v.strip()
+
+    @field_validator("prioridad")
+    def validar_prioridad(cls, v):
+        valor = v.strip().lower()
+        if valor not in ["baja", "media", "alta"]:
+            raise ValueError("Prioridad inválida. Usa: 'baja', 'media' o 'alta'")
+        return valor
+
+    @field_validator("hora")
+    def validar_formato_hora(cls, v):
+        if v is None:
+            return None
+        v = v.strip()
+        if not validar_hora(v):
+            raise ValueError("Hora debe tener formato HH:MM (ejemplo: 14:30, 09:15)")
+        return v
+
+    @field_validator("fecha")
+    def fecha_no_pasada(cls, v):
+        if v < date.today():
+            raise ValueError("No se permiten fechas del pasado")
+        return v
+
+    @field_validator("etiqueta_color")
+    def validar_color(cls, v):
+        if v and not v.strip().startswith("#"):
+            raise ValueError("El color debe ser en formato hexadecimal (ej: #ff5733)")
+        return v.strip() if v else None
 
 
 class TareaUpdate(BaseModel):
@@ -39,52 +69,76 @@ class TareaUpdate(BaseModel):
     recordatorio_minutos: Optional[int] = None
     estado: Optional[str] = None
 
+    @field_validator("titulo")
+    def validar_titulo(cls, v):
+        if v is not None and not validar_string(v, min_len=3, max_len=200):
+            raise ValueError("El título debe tener entre 3 y 200 caracteres")
+        return v.strip() if v else None
+
+    @field_validator("prioridad")
+    def validar_prioridad(cls, v):
+        if v is None:
+            return None
+        valor = v.strip().lower()
+        if valor not in ["baja", "media", "alta"]:
+            raise ValueError("Prioridad inválida. Valores permitidos: baja, media, alta")
+        return valor
+
+    @field_validator("estado")
+    def validar_estado(cls, v):
+        if v is None:
+            return None
+        valor = v.strip().lower()
+        if valor not in ["pendiente", "en_progreso", "completada", "pausada"]:
+            raise ValueError("Estado inválido. Usa: pendiente, en_progreso, completada o pausada")
+        return valor
+
+    @field_validator("hora")
+    def validar_formato_hora(cls, v):
+        if v is None:
+            return None
+        v = v.strip()
+        if v and not validar_hora(v):
+            raise ValueError("Hora inválida. Formato correcto: HH:MM (ej: 08:00)")
+        return v
+
+    @field_validator("fecha")
+    def fecha_no_pasada(cls, v):
+        if v is not None and v < date.today():
+            raise ValueError("No puedes poner una fecha pasada")
+        return v
+
 
 class TareaOut(BaseModel):
     id_tarea: int
     titulo: str
-    descripcion: Optional[str] = None
+    descripcion: Optional[str]
     fecha: date
-    hora: Optional[str] = None
+    hora: Optional[str]
     prioridad: str
     estado: str
-    id_categoria: Optional[int] = None
-    etiqueta_color: Optional[str] = None
-    recordatorio_minutos: Optional[int] = None
+    id_categoria: Optional[int]
+    etiqueta_color: Optional[str]
+    recordatorio_minutos: Optional[int]
 
     model_config = {"from_attributes": True}
 
 
 # ======================= ENDPOINTS =======================
-@router.post("/", response_model=TareaOut)
-def crear_tarea(
-    tarea: TareaCreate,
-    db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
-):
-    # Validaciones
-    if not validar_string(tarea.titulo, 3, 200):
-        raise HTTPException(400, "Título debe tener entre 3 y 200 caracteres")
-    if not validar_prioridad(tarea.prioridad):
-        raise HTTPException(400, "Prioridad inválida (baja/media/alta)")
-    if tarea.fecha < date.today():
-        raise HTTPException(400, "No se permiten fechas pasadas")
-    if tarea.hora and not validar_hora(tarea.hora):
-        raise HTTPException(400, "Hora debe tener formato HH:MM")
-
+@router.post("/", response_model=TareaOut, status_code=201)
+def crear_tarea(tarea: TareaCreate, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
     nueva = Tarea(
-        id_usuario=user.id_usuario,               # ← CORREGIDO
-        titulo=tarea.titulo.strip(),
+        id_usuario=user.id_usuario,
+        titulo=tarea.titulo,
         descripcion=tarea.descripcion,
         fecha=tarea.fecha,
-        hora=tarea.hora,                          # ← string directo
+        hora=tarea.hora,
         id_categoria=tarea.id_categoria,
-        prioridad=tarea.prioridad.lower(),
+        prioridad=tarea.prioridad,
         estado="pendiente",
         etiqueta_color=tarea.etiqueta_color,
         recordatorio_minutos=tarea.recordatorio_minutos,
     )
-
     db.add(nueva)
     db.commit()
     db.refresh(nueva)
@@ -97,10 +151,10 @@ def listar_tareas(
     user: Usuario = Depends(get_current_user),
     id_categoria: Optional[int] = Query(None, alias="categoria"),
 ):
-    query = db.query(Tarea).filter(Tarea.id_usuario == user.id_usuario)
+    q = db.query(Tarea).filter(Tarea.id_usuario == user.id_usuario)
     if id_categoria:
-        query = query.filter(Tarea.id_categoria == id_categoria)
-    return query.order_by(Tarea.fecha, Tarea.hora).all()
+        q = q.filter(Tarea.id_categoria == id_categoria)
+    return q.order_by(Tarea.fecha, Tarea.hora).all()
 
 
 @router.put("/{id_tarea}", response_model=TareaOut)
@@ -110,19 +164,12 @@ def actualizar_tarea(
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
-    tarea = (
-        db.query(Tarea)
-        .filter(Tarea.id_tarea == id_tarea, Tarea.id_usuario == user.id_usuario)
-        .first()
-    )
+    tarea = db.query(Tarea).filter(Tarea.id_tarea == id_tarea, Tarea.id_usuario == user.id_usuario).first()
     if not tarea:
-        raise HTTPException(404, "Tarea no encontrada")
+        raise HTTPException(404, "Tarea no encontrada o no te pertenece")
 
+    # Aplicar solo los campos que vengan
     update_data = datos.dict(exclude_unset=True)
-
-    if "hora" in update_data and update_data["hora"]:
-        if not validar_hora(update_data["hora"]):
-            raise HTTPException(400, "Formato de hora inválido (HH:MM)")
 
     for key, value in update_data.items():
         setattr(tarea, key, value)
@@ -132,17 +179,9 @@ def actualizar_tarea(
     return tarea
 
 
-@router.delete("/{id_tarea}")
-def eliminar_tarea(
-    id_tarea: int,
-    db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
-):
-    tarea = (
-        db.query(Tarea)
-        .filter(Tarea.id_tarea == id_tarea, Tarea.id_usuario == user.id_usuario)
-        .first()
-    )
+@router.delete("/{id_tarea}", status_code=200)
+def eliminar_tarea(id_tarea: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    tarea = db.query(Tarea).filter(Tarea.id_tarea == id_tarea, Tarea.id_usuario == user.id_usuario).first()
     if not tarea:
         raise HTTPException(404, "Tarea no encontrada")
 
@@ -162,19 +201,19 @@ def filtrar_tareas(
     estado: Optional[str] = None,
     prioridad: Optional[str] = None,
 ):
-    query = db.query(Tarea).filter(Tarea.id_usuario == user.id_usuario)
+    q = db.query(Tarea).filter(Tarea.id_usuario == user.id_usuario)
 
     if id_categoria is not None:
-        query = query.filter(Tarea.id_categoria == id_categoria)
+        q = q.filter(Tarea.id_categoria == id_categoria)
     if fecha:
-        query = query.filter(Tarea.fecha == fecha)
+        q = q.filter(Tarea.fecha == fecha)
     if desde:
-        query = query.filter(Tarea.fecha >= desde)
+        q = q.filter(Tarea.fecha >= desde)
     if hasta:
-        query = query.filter(Tarea.fecha <= hasta)
+        q = q.filter(Tarea.fecha <= hasta)
     if estado:
-        query = query.filter(Tarea.estado == estado.lower())
+        q = q.filter(Tarea.estado == estado.strip().lower())
     if prioridad:
-        query = query.filter(Tarea.prioridad == prioridad.lower())
+        q = q.filter(Tarea.prioridad == prioridad.strip().lower())
 
-    return query.order_by(Tarea.fecha, Tarea.hora).all()
+    return q.order_by(Tarea.fecha, Tarea.hora).all()
