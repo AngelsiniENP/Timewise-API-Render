@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS "Usuario_Modos" (
     UNIQUE(id_usuario, id_modo)
 );
 
--- Tabla Tareas
+-- Tabla Tareas (SIN id_meta, repeticion, duracion_estimada)
 CREATE TABLE IF NOT EXISTS "Tareas" (
     id_tarea INTEGER PRIMARY KEY AUTOINCREMENT,
     id_usuario INTEGER NOT NULL,
@@ -69,10 +69,8 @@ CREATE TABLE IF NOT EXISTS "Tareas" (
     fecha DATE,
     hora TIME,
     prioridad TEXT CHECK(prioridad IN ('baja', 'media', 'alta')),
-    duracion_estimada INTEGER,
     estado TEXT DEFAULT 'pendiente' CHECK(estado IN ('pendiente', 'en_progreso', 'completada', 'pausada')),
     etiqueta_color TEXT,
-    repeticion TEXT,
     recordatorio_minutos INTEGER,
     FOREIGN KEY (id_usuario) REFERENCES "Usuario"(id_usuario) ON DELETE CASCADE,
     FOREIGN KEY (id_categoria) REFERENCES "Tipos_de_tareas"(id_categoria)
